@@ -194,7 +194,10 @@ struct AudioObserverPanel: View {
             }
         }
         .background(themeState.mode.outerBackground)
-        .preferredColorScheme(themeState.mode.isLight ? .light : .dark)
+        // Scope the analyzer theme to this panel. `.preferredColorScheme` targets the whole
+        // window, and on macOS 15 it is not fully withdrawn when the panel goes away: other
+        // screens were left with dark-scheme text and lists over a light window.
+        .environment(\.colorScheme, themeState.mode.isLight ? .light : .dark)
         .clipShape(RoundedRectangle(cornerRadius: 12))
         .task { await model.run() }
     }
