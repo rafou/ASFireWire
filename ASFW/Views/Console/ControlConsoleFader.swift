@@ -1,9 +1,10 @@
 import SwiftUI
 
 /// A scalar parameter as a console fader with its scale and readout. The
-/// value is sent once, when the drag ends; until the device answers, the
-/// fader holds the sent value, then follows the confirmed one (a refused
-/// write springs back).
+/// value is sent as the drag crosses each step (the view model keeps only the
+/// latest while a write is in flight), so the device follows the hand; after
+/// the drag the fader holds the last sent value until the device answers,
+/// then follows the confirmed one (a refused write springs back).
 struct ControlConsoleFader: View {
     let parameter: ControlParameter
     let state: DeviceControlsViewModel.WriteState
@@ -12,7 +13,11 @@ struct ControlConsoleFader: View {
     var accessibilityName: String?
     let write: (Double) -> Void
 
+    /// The value shown while dragging or awaiting the device's answer.
     @State private var pending: Double?
+    /// The last value handed to `write` during this gesture.
+    @State private var sent: Double?
+    @State private var dragging = false
 
     private static let thumb = CGSize(width: 34, height: 22)
 
@@ -34,10 +39,19 @@ struct ControlConsoleFader: View {
                         fillsTrack: false,
                         isEnabled: parameter.isWritable && parameter.value != nil,
                         valueDescription: { Self.format($0, domain) },
+                        onValueChanged: { value in
+                            dragging = true
+                            send(domain.snap(value))
+                        },
                         onValueCommitted: { value in
+                            dragging = false
                             let snapped = domain.snap(value)
-                            pending = snapped
-                            write(snapped)
+                            if snapped != sent {
+                                send(snapped) // its answer clears `pending`
+                            } else if !state.isWriting {
+                                pending = nil // the last value is already confirmed
+                                sent = nil
+                            }
                         })
                     .frame(width: 46, height: ControlConsoleMetrics.faderHeight)
                     if showsScale { ControlConsoleFaderScale(domain: domain, range: range, thumbHeight: Self.thumb.height) }
@@ -56,9 +70,21 @@ struct ControlConsoleFader: View {
                 .accessibilityHidden(true)
         }
         .onChange(of: state) { _, state in
-            if !state.isWriting { pending = nil }
+            // Between two writes of one drag the state is briefly idle: keep the hand's value.
+            if !state.isWriting && !dragging {
+                pending = nil
+                sent = nil
+            }
         }
         .help(parameter.applicable ? parameter.name : "\(parameter.name): not applicable in the current mode")
+    }
+
+    /// Shows `value` and sends it unless it was the last value sent.
+    private func send(_ value: Double) {
+        pending = value
+        guard value != sent else { return }
+        sent = value
+        write(value)
     }
 
     private var readout: String {

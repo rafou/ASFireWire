@@ -396,14 +396,18 @@ struct ParameterRow: View {
             }
             if let range = domain.range {
                 Slider(value: Binding(get: { dragValue ?? parameter.value?.doubleValue ?? range.lowerBound },
-                                      set: { dragValue = $0 }),
+                                      set: { value in
+                                          // Send as the drag crosses each step; the view model keeps
+                                          // only the latest value while a write is in flight.
+                                          let previous = dragValue.map(domain.snap)
+                                          dragValue = value
+                                          if domain.snap(value) != previous { write(.double(domain.snap(value))) }
+                                      }),
                        in: range) { editing in
                     if editing {
                         dragValue = dragValue ?? parameter.value?.doubleValue
-                    } else if let value = dragValue {
-                        // Send once, on release; the view model snaps it onto the step grid.
+                    } else {
                         dragValue = nil
-                        write(.double(value))
                     }
                 }
                 .controlSize(.small)

@@ -33,9 +33,10 @@ struct ControlConsoleView: View {
     }
 
     private func rack(_ layout: ControlConsoleLayout, metrics: ControlConsoleMetrics) -> some View {
-        HStack(alignment: .top, spacing: 14) {
-            ForEach(Array(Self.sections(layout).enumerated()), id: \.element.id) { index, section in
-                if index > 0 { AudioConsoleRackDivider() }
+        // Sections stack (inputs, mixers, outputs, other), each bank a row: the
+        // rack scrolls as wide as its widest bank instead of all of them in a line.
+        VStack(alignment: .leading, spacing: 18) {
+            ForEach(Self.sections(layout)) { section in
                 sectionView(section, metrics: metrics)
             }
         }
