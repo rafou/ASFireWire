@@ -518,3 +518,10 @@ add_audio_test(OrpheusControlModelTests
     "${ASFW_DRIVER_DIR}/Audio/Model/Topology/Validate.cpp"
 )
 
+
+add_audio_test(SPro24DspControlModelTests
+    topology/SPro24DspControlModelTests.cpp
+    "${ASFW_DRIVER_DIR}/Audio/Controls/CoreAudioProjection.cpp"
+    "${ASFW_DRIVER_DIR}/Audio/Model/Topology/Validate.cpp"
+    "${ASFW_DRIVER_DIR}/Audio/Protocols/DICE/Focusrite/SaffireproCommon.cpp"
+)

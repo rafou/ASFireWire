@@ -280,6 +280,9 @@ private struct RouterCard: View {
             if node.bundles.isEmpty {
                 Text("No inputs published.").font(.callout).foregroundStyle(.secondary)
             }
+            if usesMenu {
+                RouterSourcePicker(node: node, snapshot: snapshot, model: model)
+            } else {
             VStack(alignment: .leading, spacing: 6) {
                 ForEach(node.bundles) { bundle in
                     let active = node.activeBundles.contains(bundle.id)
@@ -304,10 +307,17 @@ private struct RouterCard: View {
             if case .failed(let message) = model.writeState(node.id | 0x8000_0000) {
                 Text(message).font(.caption).foregroundStyle(.red)
             }
+            }
             if !node.bundles.isEmpty && node.activeBundles.isEmpty {
                 Text("The device did not report the active input.").font(.caption).foregroundStyle(.secondary)
             }
         }
+    }
+
+    /// A one-output router with many sources (a Saffire output offers 45) reads
+    /// better as a menu than as a list of Select buttons.
+    private var usesMenu: Bool {
+        node.writable && node.outputs.count == 1 && node.bundles.count > 6
     }
 
     private func label(_ bundle: ControlBundle) -> String {
@@ -318,6 +328,49 @@ private struct RouterCard: View {
             return "\(input) → \(snapshot.port(route.output)?.name ?? "Port \(route.output)")"
         }
         return names.isEmpty ? "Bundle \(bundle.id)" : names.joined(separator: ", ")
+    }
+}
+
+/// A one-output router as a source menu. Selecting writes the route; the menu
+/// shows the active bundle the device reported, and the route write's state.
+private struct RouterSourcePicker: View {
+    let node: ControlNode
+    let snapshot: ControlSnapshot
+    @ObservedObject var model: DeviceControlsViewModel
+
+    /// The key RouterCard uses for a route write's state.
+    private var writeKey: UInt32 { node.id | 0x8000_0000 }
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 4) {
+            Picker("Source", selection: Binding<UInt32?>(
+                get: { node.activeBundles.first },
+                set: { selected in
+                    guard let selected, !node.activeBundles.contains(selected),
+                          let route = node.bundles.first(where: { $0.id == selected })?.routes.first else { return }
+                    Task { await model.writeRoute(router: node.id, output: route.output, input: route.input) }
+                })) {
+                if node.activeBundles.isEmpty {
+                    Text("Unknown").tag(UInt32?.none)
+                }
+                ForEach(node.bundles) { bundle in
+                    Text(name(of: bundle)).tag(UInt32?.some(bundle.id))
+                }
+            }
+            .disabled(isWriting)
+            if case .failed(let message) = model.writeState(writeKey) {
+                Text(message).font(.caption).foregroundStyle(.red)
+            }
+        }
+        .font(.callout)
+    }
+
+    private var isWriting: Bool {
+        if case .writing = model.writeState(writeKey) { true } else { false }
+    }
+
+    private func name(of bundle: ControlBundle) -> String {
+        bundle.routes.first.flatMap { snapshot.port($0.input)?.name } ?? "Bundle \(bundle.id)"
     }
 }
 

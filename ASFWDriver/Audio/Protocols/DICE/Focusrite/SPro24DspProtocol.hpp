@@ -7,14 +7,20 @@
 #pragma once
 
 #include "SaffireproCommon.hpp"
+#include "SPro24DspControlModel.hpp"
 #include "SPro24DspTypes.hpp"
 #include "../Core/DICETypes.hpp"
 #include "../Core/DiceClockChangeObserver.hpp"
 #include "../TCAT/DICETcatProtocol.hpp"
 #include "../../IDeviceProtocol.hpp"
+#include "../../../Controls/IControlProvider.hpp"
+#include "../../../../Scheduling/ITimerScheduler.hpp"
 #include <array>
 #include <cstdint>
+#include <deque>
 #include <memory>
+#include <optional>
+#include <vector>
 
 namespace ASFW::IRM {
 class IRMClient;
@@ -41,6 +47,7 @@ constexpr uint32_t kSPro24DspModelId = 0x000008;
 /// This class provides async-callback-based access to device parameters.
 /// All operations are asynchronous since they involve FireWire transactions.
 class SPro24DspProtocol : public Audio::IDeviceProtocol,
+                          public ::ASFW::Audio::Controls::IControlProvider,
                           private DiceClockChangeObserver {
 public:
     /// Callback types for async operations
@@ -78,6 +85,18 @@ public:
     
     /// Device has DSP effects
     bool HasDsp() const override { return true; }
+
+    // ========================================================================
+    // Device Controls (IControlProvider). Controller (Default) queue only:
+    // every step is an asynchronous transaction, never a blocking DiceDeviceIo.
+    // ========================================================================
+    ::ASFW::Audio::Controls::IControlProvider* Controls() noexcept override { return this; }
+    void Prepare(std::function<void(IOReturn)> done) override;
+    std::optional<::ASFW::Audio::Controls::ControlSnapshot> CopySnapshot() const override;
+    void SetParameter(AudioModel::ParameterId id, const AudioModel::ParameterValue& value,
+                      Completion done) override;
+    void SetRoute(AudioModel::NodeId router, AudioModel::PortId output,
+                  std::optional<AudioModel::PortId> input, Completion done) override;
 
     bool GetRuntimeAudioStreamCaps(AudioStreamRuntimeCaps& outCaps) const override;
     std::shared_ptr<const std::vector<Runtime::RateFormation>> RateFormations() const override {
@@ -179,6 +198,46 @@ private:
     
     /// Write to application section
     void WriteAppSection(uint32_t offset, const uint8_t* data, size_t size, DICEWriteCallback callback);
+
+    // --- Output group / input params writes: read-modify-write, changed quadlets only.
+    /// Writes the quadlets of `after` that differ from `before`, then the notices
+    /// focusrite.rs sends: DimMute if 0x00-0x07 changed, OutputSrc if 0x08-0x33 did.
+    void WriteOutputGroupDiff(const OutputGroupState& before, const OutputGroupState& after,
+                              VoidCallback callback);
+    void WriteInputParamsDiff(const InputParams& before, const InputParams& after, VoidCallback callback);
+
+    // --- TCAT extension router and command section (absolute DICE offsets).
+    void ReadRouterTable(SPro24DspRouter::RateMode mode,
+                         std::function<void(IOReturn, std::vector<uint32_t>)> callback);
+    /// Writes `table` to the router section and loads it into `mode`'s current config.
+    void LoadRouterTable(SPro24DspRouter::RateMode mode, std::vector<uint32_t> table,
+                         VoidCallback callback);
+    /// Runs one extension command: waits for the section to be idle, writes the
+    /// opcode, waits for EXECUTE to clear and returns the command's result word.
+    void RunExtensionCommand(uint32_t opcode, uint32_t timeoutMs,
+                             std::function<void(IOReturn, uint32_t)> callback);
+    /// Polls the opcode register (every 10 ms on the driver timer) until EXECUTE clears.
+    void AwaitExtensionCommandIdle(uint32_t pollsLeft, std::function<void(IOReturn)> callback);
+    [[nodiscard]] size_t RouterCapacity() const noexcept;
+
+    // --- Control provider state (mirrors OrpheusProtocol's queueing discipline).
+    void ReadControlsState(VoidCallback done);
+    bool CommitControls();
+    void FinishControlWrite(AudioModel::ParameterId id, IOReturn status, Completion done);
+    void QueueControl(std::function<void(SPro24DspProtocol&)> op, Completion refuse);
+    void ReleaseControl();
+    void ResetControls();
+    [[nodiscard]] std::shared_ptr<SPro24DspProtocol> SharedSelf();
+
+    static constexpr size_t kMaxControlWaiters = 16;
+    Scheduling::ITimerScheduler* timerScheduler_{nullptr};
+    SPro24DspControlsState controls_{};
+    std::optional<::ASFW::Audio::Controls::ControlSnapshot> controlSnapshot_;
+    std::deque<std::function<void()>> controlWaiters_;
+    bool controlsReady_{false};
+    bool controlBusy_{false};
+    uint64_t controlsEpoch_{0};
+    uint64_t controlRouteEpoch_{0};
 };
 
 } // namespace ASFW::Audio::DICE::Focusrite
