@@ -895,13 +895,13 @@ void SPro24DspProtocol::SetParameter(AudioModel::ParameterId id, const AudioMode
     if (raw == K::MonitorMute || raw == K::MonitorDim || volume || outputMute) {
         const auto* flag = std::get_if<bool>(&value);
         const auto* level = std::get_if<double>(&value);
-        if ((volume && (level == nullptr || !(*level >= OutputGroupState::kVolMin && *level <= OutputGroupState::kVolMax))) ||
+        if ((volume && (level == nullptr || !(*level >= kOutputVolumeMinDb && *level <= 0.0))) ||
             (!volume && flag == nullptr)) {
             done(kIOReturnBadArgument, false);
             return;
         }
         const bool on = flag != nullptr && *flag;
-        const auto volumeValue = static_cast<int8_t>(level != nullptr ? std::lround(*level) : 0);
+        const auto volumeValue = level != nullptr ? OutputVolumeFromDb(*level) : int8_t{0};
         controlBusy_ = true;
         GetOutputGroupState([self, raw, volume, outputMute, on, volumeValue, finish](IOReturn status,
                                                                                    OutputGroupState current) {

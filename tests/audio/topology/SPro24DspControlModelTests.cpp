@@ -175,7 +175,7 @@ TEST(SPro24DspControlModelTests, ParametersReflectTheReadBackState) {
     EXPECT_EQ(Param(model, SPro24DspControl::InputHighGain + 1).value, AM::ParameterValue{int64_t{1}});
     EXPECT_EQ(Param(model, SPro24DspControl::MonitorDim).value, AM::ParameterValue{true});
     EXPECT_EQ(Param(model, SPro24DspControl::MonitorMute).value, AM::ParameterValue{false});
-    EXPECT_EQ(Param(model, SPro24DspControl::OutputVolume + 3).value, AM::ParameterValue{100.0});
+    EXPECT_EQ(Param(model, SPro24DspControl::OutputVolume + 3).value, AM::ParameterValue{-27.0}); // 100 of 127, 1 dB per step
     EXPECT_EQ(Param(model, SPro24DspControl::OutputMute + 5).value, AM::ParameterValue{true});
 }
 
@@ -204,6 +204,27 @@ TEST(SPro24DspControlModelTests, NothingBecomesACoreAudioControl) {
     const auto model = BuildSPro24DspControls(MakeState(LowAfterMixControl(), MiddleAfterMixControl()), 1, 1);
     EXPECT_TRUE(C::ProjectCoreAudioControls(model.topology, model.state).empty());
     EXPECT_TRUE(C::ProjectInputTypes(model.topology, model.state).empty());
+}
+
+TEST(SPro24DspControlModelTests, OutputVolumeIsPublishedInDecibels) {
+    EXPECT_EQ(OutputVolumeDb(127), 0.0);
+    EXPECT_EQ(OutputVolumeDb(100), -27.0);
+    EXPECT_EQ(OutputVolumeDb(0), -127.0);
+    EXPECT_EQ(OutputVolumeFromDb(0.0), 127);
+    EXPECT_EQ(OutputVolumeFromDb(-27.0), 100);
+    EXPECT_EQ(OutputVolumeFromDb(-26.6), 100); // rounds to the nearest step
+    EXPECT_EQ(OutputVolumeFromDb(-127.0), 0);
+    EXPECT_EQ(OutputVolumeFromDb(-500.0), 0);  // clamped
+    EXPECT_EQ(OutputVolumeFromDb(6.0), 127);
+    for (int v = 0; v <= 127; ++v) EXPECT_EQ(OutputVolumeFromDb(OutputVolumeDb(int8_t(v))), v);
+    const auto model = BuildSPro24DspControls(MakeState(LowAfterMixControl(), {}), 1, 1);
+    const auto volume = std::ranges::find(model.topology.parameters,
+                                          AM::ParameterId{SPro24DspControl::OutputVolume}, &AM::Parameter::id);
+    ASSERT_NE(volume, model.topology.parameters.end());
+    const auto& domain = std::get<AM::ScalarDomain>(volume->domain);
+    EXPECT_EQ(domain.unit, AM::ScalarUnit::Decibels);
+    EXPECT_EQ(domain.min, -127.0);
+    EXPECT_EQ(domain.max, 0.0);
 }
 
 // The output-group write sends only changed quadlets (focusrite.rs): one volume

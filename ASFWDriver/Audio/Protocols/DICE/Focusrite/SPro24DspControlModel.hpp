@@ -171,6 +171,21 @@ struct SPro24DspControlsState {
     SPro24DspRouter::RateMode liveMode{SPro24DspRouter::RateMode::Low};
 };
 
+/// Output-group volume in dB. The device stores 127 - volume per output
+/// (focusrite.rs); the reference publishes the raw 0-127 without a dB scale.
+/// Read here as 1 dB of attenuation per step: on a Pro 24 DSP, volume 100 was
+/// already near-silent at a normal listening level (2026-11-18), which fits
+/// -27 dB, not -13.5 dB. Not yet checked against MixControl's dB readout.
+inline constexpr double kOutputVolumeMinDb = -double(OutputGroupState::kVolMax);
+[[nodiscard]] constexpr double OutputVolumeDb(int8_t volume) noexcept {
+    return double(volume) - double(OutputGroupState::kVolMax);
+}
+[[nodiscard]] constexpr int8_t OutputVolumeFromDb(double db) noexcept {
+    const double clamped = db < kOutputVolumeMinDb ? kOutputVolumeMinDb : (db > 0 ? 0 : db);
+    const double steps = clamped + double(OutputGroupState::kVolMax);
+    return static_cast<int8_t>(steps + (steps >= 0 ? 0.5 : -0.5));
+}
+
 /// Port id of source `source` on output router `destination`: each router owns
 /// its own input ports, numbered from a block per router.
 [[nodiscard]] constexpr uint32_t SPro24DspRouterInputPort(size_t destination, size_t source) noexcept {
@@ -234,7 +249,7 @@ inline Controls::ControlSnapshot BuildSPro24DspControls(const SPro24DspControlsS
     // Controls titles them by output. Nothing links to the host streams.
     AM::ProcessorNode monitor;
     monitor.channelPreserving = true;
-    node(51, "Analog Outputs", AM::EndpointNode{AM::EndpointKind::Physical});
+    node(51, "Analog Out", AM::EndpointNode{AM::EndpointKind::Physical});
     for (uint32_t out = 0; out < 6; ++out) {
         const std::string name = SPro24DspRouter::kDestinations[out].name;
         monitor.inputs.push_back(port(30 + out, 50, AM::PortDirection::Input, name));
@@ -243,7 +258,7 @@ inline Controls::ControlSnapshot BuildSPro24DspControls(const SPro24DspControlsS
         t.fixedLinks.push_back({AM::PortId{SPro24DspRouterOutputPort(out)}, AM::PortId{30 + out}});
         t.fixedLinks.push_back({AM::PortId{40 + out}, jack});
     }
-    node(52, "S/PDIF Outputs", AM::EndpointNode{AM::EndpointKind::Physical});
+    node(52, "S/PDIF Out", AM::EndpointNode{AM::EndpointKind::Physical});
     for (uint32_t ch = 0; ch < 2; ++ch) {
         const auto jack = port(66 + ch, 52, AM::PortDirection::Input,
                                SPro24DspRouter::kDestinations[6 + ch].name, {AM::SignalKind::SpdifCoaxial, ch + 1});
@@ -257,9 +272,8 @@ inline Controls::ControlSnapshot BuildSPro24DspControls(const SPro24DspControlsS
           "Dim", native.outputs.dimEnabled);
     for (uint32_t out = 0; out < 6; ++out) {
         param(SPro24DspControl::OutputVolume + out, monitorOutputs[out], AM::ParameterSemantic::Level,
-              AM::ScalarDomain{double(OutputGroupState::kVolMin), double(OutputGroupState::kVolMax), 1,
-                               AM::ScalarUnit::Generic},
-              "Output " + std::to_string(out + 1) + " Volume", double(native.outputs.volumes[out]));
+              AM::ScalarDomain{kOutputVolumeMinDb, 0, 1, AM::ScalarUnit::Decibels},
+              "Output " + std::to_string(out + 1) + " Volume", OutputVolumeDb(native.outputs.volumes[out]));
         param(SPro24DspControl::OutputMute + out, monitorOutputs[out], AM::ParameterSemantic::Mute,
               AM::BooleanDomain{}, "Output " + std::to_string(out + 1) + " Mute", native.outputs.volMutes[out]);
     }
